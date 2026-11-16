@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Plus Jakarta Sans', Inter, system-ui, -apple-system, sans-serif;
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background-color: #FAF0E3;
+  color: #2C1030;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app-bg-wrapper {
+  min-height: 100vh;
+  background-color: #FAF0E3;
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+/* Subtle interactive button transition */
+.btn-soft {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-soft:hover:not(:disabled) {
+  transform: translateY(-1.5px);
+}
+.btn-soft:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+/* Custom scrollbars */
+textarea::-webkit-scrollbar,
+div::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+textarea::-webkit-scrollbar-track,
+div::-webkit-scrollbar-track {
+  background: rgba(44, 16, 48, 0.04);
+  border-radius: 8px;
+}
+textarea::-webkit-scrollbar-thumb,
+div::-webkit-scrollbar-thumb {
+  background: rgba(44, 16, 48, 0.20);
+  border-radius: 8px;
+}
+textarea::-webkit-scrollbar-thumb:hover,
+div::-webkit-scrollbar-thumb:hover {
+  background: #EC5478;
+}
+
+/* Sound wave animation keyframes */
+@keyframes soundwave {
+  0%, 100% {
+    height: 6px;
+    opacity: 0.4;
+  }
+  50% {
+    height: 28px;
+    opacity: 1;
+  }
+}
+
+@keyframes indeterminate {
+  0% {
+    left: -35%;
+    width: 35%;
+  }
+  50% {
+    left: 40%;
+    width: 50%;
+  }
+  100% {
+    left: 100%;
+    width: 35%;
+  }
+}
+
+.animate-wave-1 { animation: soundwave 1.1s ease-in-out infinite 0.1s; }
+.animate-wave-2 { animation: soundwave 1.1s ease-in-out infinite 0.25s; }
+.animate-wave-3 { animation: soundwave 1.1s ease-in-out infinite 0.4s; }
+.animate-wave-4 { animation: soundwave 1.1s ease-in-out infinite 0.55s; }
+.animate-wave-5 { animation: soundwave 1.1s ease-in-out infinite 0.7s; }
+.animate-wave-6 { animation: soundwave 1.1s ease-in-out infinite 0.85s; }
+.animate-wave-7 { animation: soundwave 1.1s ease-in-out infinite 1.0s; }

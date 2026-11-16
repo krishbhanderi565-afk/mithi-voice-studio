@@ -1,0 +1,281 @@
+name: Build MAVS Cross-Platform Desktop Installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    name: Build Windows x64 Installer
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - name: Cache spaCy English Model
+        uses: actions/cache@v4
+        id: cache-spacy-win
+        with:
+          path: ~\AppData\Local\pip\cache
+          key: spacy-en-core-web-sm-win-3.8.0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          python -m spacy download en_core_web_sm
+          pip install pyinstaller
+
+      - name: Build standalone Python backend
+        run: |
+          pyinstaller --clean --noconfirm --distpath backend/dist backend/mavs_backend.spec
+
+      - name: Build React frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Package Windows Installer (NSIS)
+        run: |
+          cd desktop
+          npm ci
+          npm run build
+          npm run pack:win
+
+      - name: Verify Windows Installer and Compute Checksum
+        shell: pwsh
+        run: |
+          $installer = "release/MAVS-Setup-x64.exe"
+          if (!(Test-Path $installer) -or ((Get-Item $installer).Length -eq 0)) {
+            Write-Error "Windows installer is missing or empty!"
+            exit 1
+          }
+          Get-Item $installer | Select-Object Name, Length, LastWriteTime
+          Get-FileHash -Path $installer -Algorithm SHA256
+
+      - name: Upload Windows Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MAVS-Windows-x64
+          path: release/MAVS-Setup-x64.exe
+          if-no-files-found: error
+
+  build-macos-arm64:
+    name: Build macOS Apple Silicon DMG (ARM64)
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify runner architecture (ARM64)
+        run: |
+          ARCH=$(uname -m)
+          echo "Current runner architecture: $ARCH"
+          if [ "$ARCH" != "arm64" ]; then
+            echo "Error: Expected ARM64 runner but got $ARCH"
+            exit 1
+          fi
+
+      - name: Install macOS audio dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          brew install espeak-ng libsndfile
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - name: Cache spaCy English Model
+        uses: actions/cache@v4
+        id: cache-spacy-arm64
+        with:
+          path: ~/Library/Caches/pip
+          key: spacy-en-core-web-sm-arm64-3.8.0
+
+      - name: Cache Electron Builder Binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: electron-mac-arm64-${{ hashFiles('desktop/package-lock.json') }}
+          restore-keys: |
+            electron-mac-arm64-
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          python -m spacy download en_core_web_sm
+          pip install pyinstaller
+
+      - name: Build standalone Python backend (ARM64)
+        run: |
+          pyinstaller --clean --noconfirm --distpath backend/dist backend/mavs_backend.spec
+          file backend/dist/mavs-backend/mavs-backend
+
+      - name: Build React frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Package macOS Apple Silicon ARM64 DMG
+        run: |
+          cd desktop
+          npm ci
+          npm run pack:mac:arm64
+
+      - name: Verify DMG Installer and Compute Checksum
+        run: |
+          DMG_PATH="release/MAVS-macOS-AppleSilicon-arm64.dmg"
+          if [ ! -s "$DMG_PATH" ]; then
+            echo "Error: DMG file $DMG_PATH is missing or empty!"
+            exit 1
+          fi
+          echo "=== Apple Silicon ARM64 DMG Verified ==="
+          ls -lh "$DMG_PATH"
+          echo -n "SHA-256 Checksum: "
+          shasum -a 256 "$DMG_PATH"
+
+      - name: Upload Apple Silicon DMG Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MAVS-macOS-AppleSilicon-arm64
+          path: release/MAVS-macOS-AppleSilicon-arm64.dmg
+          if-no-files-found: error
+
+  build-macos-x64:
+    name: Build macOS Intel DMG (x64)
+    runs-on: macos-13
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify runner architecture (x86_64)
+        run: |
+          ARCH=$(uname -m)
+          echo "Current runner architecture: $ARCH"
+          if [ "$ARCH" != "x86_64" ]; then
+            echo "Error: Expected x86_64 runner but got $ARCH"
+            exit 1
+          fi
+
+      - name: Install macOS audio dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          brew install espeak-ng libsndfile
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - name: Cache spaCy English Model
+        uses: actions/cache@v4
+        id: cache-spacy-x64
+        with:
+          path: ~/Library/Caches/pip
+          key: spacy-en-core-web-sm-x64-3.8.0
+
+      - name: Cache Electron Builder Binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: electron-mac-x64-${{ hashFiles('desktop/package-lock.json') }}
+          restore-keys: |
+            electron-mac-x64-
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          python -m spacy download en_core_web_sm
+          pip install pyinstaller
+
+      - name: Build standalone Python backend (x86_64)
+        run: |
+          pyinstaller --clean --noconfirm --distpath backend/dist backend/mavs_backend.spec
+          file backend/dist/mavs-backend/mavs-backend
+
+      - name: Build React frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Package macOS Intel x64 DMG
+        run: |
+          cd desktop
+          npm ci
+          npm run pack:mac:x64
+
+      - name: Verify DMG Installer and Compute Checksum
+        run: |
+          DMG_PATH="release/MAVS-macOS-Intel-x64.dmg"
+          if [ ! -s "$DMG_PATH" ]; then
+            echo "Error: DMG file $DMG_PATH is missing or empty!"
+            exit 1
+          fi
+          echo "=== Intel x64 DMG Verified ==="
+          ls -lh "$DMG_PATH"
+          echo -n "SHA-256 Checksum: "
+          shasum -a 256 "$DMG_PATH"
+
+      - name: Upload Intel Mac DMG Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MAVS-macOS-Intel-x64
+          path: release/MAVS-macOS-Intel-x64.dmg
+          if-no-files-found: error

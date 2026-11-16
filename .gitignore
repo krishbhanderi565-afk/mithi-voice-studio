@@ -1,0 +1,83 @@
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.dylib
+*.dll
+.Python
+
+# PyInstaller & Build artifacts
+build/
+dist/
+backend/build/
+backend/dist/
+*.spec.bak
+*.toc
+*.pkg
+
+# Electron & Release Installers
+release/
+desktop/dist/
+desktop/node_modules/
+desktop/extracted_installed_asar/
+*.exe
+*.dmg
+*.blockmap
+*.AppImage
+*.deb
+builder-debug.yml
+
+# Model weights, cache and data
+mithi-v1-flash/
+backend/mithi-v1-flash/
+models/
+*.safetensors
+*.bin
+*.model
+*.npy
+cache/
+.cache/
+temp_audio/
+backend/app/temp_audio/
+
+# Environment variables & secrets
+.env
+.env.*
+*.env
+!*.env.example
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test, scratch & diagnostic files
+desktop/cdp_inspect.js
+desktop/test_*.js
+desktop/main.js
+desktop/*.png
+inspect_electron.js
+test_console*.js
+current_electron_screenshot.png
+electron_diag_screen.png
+backend_startup_timeline.txt
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini

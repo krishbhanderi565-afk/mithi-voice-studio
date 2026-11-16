@@ -1,0 +1,84 @@
+{
+  "name": "mavs-desktop",
+  "productName": "MAVS",
+  "version": "1.0.0",
+  "description": "MAVS — Mithi AI Voice Studio Desktop Speech Synthesis",
+  "main": "dist/main.js",
+  "author": "Jayesh Bhanderi",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build:main": "tsc",
+    "copy:frontend": "node -e \"const fs = require('fs'); fs.cpSync('../frontend/dist', 'dist/renderer', {recursive: true});\"",
+    "copy:assets": "node -e \"const fs = require('fs'); if (!fs.existsSync('dist/assets')) fs.mkdirSync('dist/assets', {recursive: true}); fs.cpSync('assets', 'dist/assets', {recursive: true});\"",
+    "build": "npm run build:main && npm run copy:frontend && npm run copy:assets",
+    "pack:win": "npm run build && electron-builder --win --x64",
+    "pack:linux": "npm run build && electron-builder --linux",
+    "pack:mac": "npm run build && electron-builder --mac",
+    "pack:mac:arm64": "npm run build && electron-builder --mac --arm64 -c.mac.artifactName=\"MAVS-macOS-AppleSilicon-arm64.${ext}\" -c.dmg.artifactName=\"MAVS-macOS-AppleSilicon-arm64.${ext}\"",
+    "pack:mac:x64": "npm run build && electron-builder --mac --x64 -c.mac.artifactName=\"MAVS-macOS-Intel-x64.${ext}\" -c.dmg.artifactName=\"MAVS-macOS-Intel-x64.${ext}\"",
+    "start": "npm run build && electron ."
+  },
+  "build": {
+    "appId": "com.mithi.mavs",
+    "productName": "MAVS — Mithi AI Voice Studio",
+    "directories": {
+      "output": "../release"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/dist/mavs-backend",
+        "to": "bin/mavs-backend",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "MAVS-Setup-x64.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "MAVS - Mithi AI Voice Studio",
+      "runAfterFinish": true
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "target": ["AppImage", "deb"],
+      "category": "AudioVideo",
+      "artifactName": "MAVS-${arch}.${ext}"
+    },
+    "mac": {
+      "icon": "assets/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        }
+      ],
+      "category": "public.app-category.entertainment",
+      "artifactName": "MAVS-macOS-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "MAVS — Mithi AI Voice Studio",
+      "icon": "assets/icon.icns",
+      "artifactName": "MAVS-macOS-${arch}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.6.3"
+  }
+}

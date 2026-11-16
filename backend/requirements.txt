@@ -1,0 +1,16 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.4.0
+transformers>=4.40.0
+safetensors>=0.4.0
+sentencepiece>=0.2.0
+numpy>=1.26.0
+soundfile>=0.12.0
+misaki[en]>=0.7.0
+espeakng-loader>=0.2.4
+phonemizer-fork>=3.3.2
+spacy>=3.8.0
+num2words>=0.5.0
+huggingface_hub>=0.20.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.0.0
