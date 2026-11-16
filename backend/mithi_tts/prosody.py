@@ -109,18 +109,22 @@ class ProsodyWriter(nn.Module):
         return self.dec_norm(h)
 
     @staticmethod
-    def _abs_from_rel(k, c, abs_row, prev_p5, prev_e3):
+    def _abs_from_rel(k, c, row, prev_p5, prev_e3):
         if k == 4:
-            return (prev_p5 + c - D_P).clamp(0, N_ST - 1)
+            val = prev_p5 + c - D_P
+            return 0 if val < 0 else (N_ST - 1 if val >= N_ST else val)
         if 5 <= k <= 8:
-            return (abs_row[k - 1] + c - D_P).clamp(0, N_ST - 1)
+            val = row[k - 1] + c - D_P
+            return 0 if val < 0 else (N_ST - 1 if val >= N_ST else val)
         if k == 9:
-            return (prev_e3 + c - D_E).clamp(0, N_E - 1)
+            val = prev_e3 + c - D_E
+            return 0 if val < 0 else (N_E - 1 if val >= N_E else val)
         if 10 <= k <= 11:
-            return (abs_row[k - 1] + c - D_E).clamp(0, N_E - 1)
+            val = row[k - 1] + c - D_E
+            return 0 if val < 0 else (N_E - 1 if val >= N_E else val)
         return c
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def sample(self, H, enc_ids, pause_ids, temp=0.8, top_p=0.9, max_breaths=None, head_temp=None):
         """Write one sentence (batch of 1), token by token. head_temp = {code name: temperature} (0 = most likely).
         Returns (dec_ids [Nd] incl. inserted breaths, P5 codes + breath_next [Nd, 12])."""
@@ -129,13 +133,15 @@ class ProsodyWriter(nn.Module):
         enc_pad = torch.zeros(1, H.shape[1], dtype=torch.bool, device=dev)
         queue = [(int(t), i) for i, t in enumerate(enc_ids.tolist())]
         n_breath, prev_p5, prev_e3 = 0, REF_P, REF_E
+        emb_weights = [emb.weight for emb in self.code_emb]
         while queue:
             tok, i = queue.pop(0)
             dec_ids.append(tok)
             dec_map.append(i)
             ctx = torch.tensor(rows + [[0] * len(NAMES)], device=dev)[None]
             ids = torch.tensor(dec_ids, device=dev)[None]
-            h = self.write(H, enc_pad, ids, torch.tensor(dec_map, device=dev)[None], ctx,
+            map_t = torch.tensor(dec_map, device=dev)[None]
+            h = self.write(H, enc_pad, ids, map_t, ctx,
                            torch.zeros_like(ids, dtype=torch.bool))[0, -1]
             row, acc = [], h
             for k, head in enumerate(self.depth):
@@ -144,13 +150,12 @@ class ProsodyWriter(nn.Module):
                     a = PITCH_NONE if k >= 4 else 0
                 else:
                     c = _sample(head(acc), t, 1.0 if k == BREATH_NEXT else top_p)
-                    a = int(self._abs_from_rel(k, torch.tensor(c), torch.tensor(row + [0]), torch.tensor(prev_p5), torch.tensor(prev_e3))) \
-                        if 4 <= k <= 11 else c
+                    a = self._abs_from_rel(k, c, row, prev_p5, prev_e3) if 4 <= k <= 11 else c
                 if k == BREATH_NEXT and (tok not in pause_ids or tok == BREATH_ID or not queue
                                          or (max_breaths is not None and n_breath >= max_breaths)):
                     a = 0
                 row.append(a)
-                acc = acc + self.code_emb[k](torch.tensor(a, device=dev))
+                acc = acc + emb_weights[k][a]
             rows.append(row)
             if row[VOICED] == 1:
                 prev_p5 = row[8]

@@ -98,9 +98,26 @@ async def generate_speech(request: GenerateRequest):
     except ValueError as ve:
         logger.warning(f"Validation error during synthesis: {ve}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except RuntimeError as re:
+        if "cancelled" in str(re).lower():
+            logger.info("Speech generation was aborted by client request.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Speech generation was cancelled.")
+        logger.exception("Runtime error during speech generation")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(re))
     except Exception as e:
         logger.exception("Inference error during speech generation")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while generating speech. Please check your text input and try again."
         )
+
+@router.get("/generate/progress")
+async def get_generation_progress():
+    """Get real-time generation progress and chunking stage."""
+    return engine.get_progress()
+
+@router.post("/generate/cancel")
+async def cancel_generation():
+    """Cancel any active speech generation in progress."""
+    cancelled = engine.cancel_active_generation()
+    return {"cancelled": cancelled, "message": "Generation cancel signal sent" if cancelled else "No active generation"}

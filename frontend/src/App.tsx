@@ -7,7 +7,7 @@ import { AudioPlayer } from './components/AudioPlayer';
 import { AlertBanner } from './components/AlertBanner';
 import { ModelSetupModal } from './components/ModelSetupModal';
 import { GenerationProgressPanel } from './components/GenerationProgressPanel';
-import { checkHealth, fetchConfig, fetchModelStatus, generateSpeech, ApiError } from './services/api';
+import { checkHealth, fetchConfig, fetchModelStatus, generateSpeech, cancelGeneration, ApiError } from './services/api';
 import type { LanguageOption, VoiceOption, AudioResult, HealthResponse } from './types';
 import { Loader2 } from 'lucide-react';
 import { IconSoundWave, IconMicrophoneWave, IconProcessorChip } from './components/icons/FlaticonIcons';
@@ -28,6 +28,7 @@ export const App: React.FC = () => {
   const [isStartingUp, setIsStartingUp] = useState<boolean>(true);
 
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [isCancelling, setIsCancelling] = useState<boolean>(false);
   const [audioResult, setAudioResult] = useState<AudioResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSetupModal, setShowSetupModal] = useState<boolean>(false);
@@ -35,6 +36,7 @@ export const App: React.FC = () => {
   // Keep track of active object URL to cleanly revoke on replacement or unmount
   const activeUrlRef = useRef<string | null>(null);
   const configLoadedRef = useRef<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const revokeCurrentUrl = () => {
     if (activeUrlRef.current) {
@@ -149,8 +151,25 @@ export const App: React.FC = () => {
     };
   }, []);
 
+  const handleCancel = async () => {
+    setIsCancelling(true);
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    try {
+      await cancelGeneration();
+    } catch {
+      // Ignore
+    } finally {
+      setIsCancelling(false);
+      setIsGenerating(false);
+    }
+  };
+
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (isGenerating) return;
 
     const cleanText = text.trim();
     if (!cleanText) {
@@ -166,8 +185,17 @@ export const App: React.FC = () => {
     setIsGenerating(true);
     setError(null);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
-      const result = await generateSpeech(cleanText, selectedLanguage, selectedVoice);
+      const result = await generateSpeech(
+        cleanText,
+        selectedLanguage,
+        selectedVoice,
+        undefined,
+        controller.signal
+      );
 
       // Clean up previous object URL
       revokeCurrentUrl();
@@ -188,14 +216,22 @@ export const App: React.FC = () => {
 
       setAudioResult(newResult);
     } catch (err: unknown) {
-      console.error('Speech generation error:', err);
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : 'Failed to generate speech. Please ensure the backend is running and try again.';
-      setError(message);
+      if (
+        (err as any)?.name === 'AbortError' ||
+        (err as any)?.message?.toLowerCase().includes('cancel')
+      ) {
+        setError('Speech generation was cancelled.');
+      } else {
+        console.error('Speech generation error:', err);
+        const message =
+          err instanceof ApiError
+            ? err.message
+            : 'Failed to generate speech. Please ensure the backend is running and try again.';
+        setError(message);
+      }
     } finally {
       setIsGenerating(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -265,6 +301,8 @@ export const App: React.FC = () => {
               language={currentLangObj}
               voice={currentVoiceObj}
               textLength={text.trim().length}
+              onCancel={handleCancel}
+              isCancelling={isCancelling}
             />
           </div>
         )}

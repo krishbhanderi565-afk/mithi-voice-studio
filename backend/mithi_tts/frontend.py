@@ -184,27 +184,74 @@ def token_words(ids):
 
 
 # ---------------------------------------------------------------- long text
-def split_text(text, lang, limit=400):
-    """The whole text if its phonemes fit, else sentences (and, if still too long, comma pieces) under the limit.
+def split_text(text, lang, limit=180):
+    """The whole text if its phonemes fit, else sentences, clause pieces, or word chunks under the limit.
+    Preserves natural sentence boundaries, paragraph pauses, and pronunciation while preventing
+    the O(N^2) quadratic decoder slowdown on long unpunctuated scripts.
     Odia ୱ is written ବ (espeak-ng spells ୱ words letter by letter)."""
-    text = " ".join(text.split())
+    if not text or not text.strip():
+        return []
+
     if lang == "or":
         text = text.replace("ୱ", "ବ")
-    if len(phonemes(text, lang)[1]) <= limit:
-        return [text]
-    parts = [s.strip() for s in re.split(r"(?<=[.!?।॥])\s+", text) if s.strip()]
-    out = []
-    for s in parts:
-        if len(phonemes(s, lang)[1]) <= limit:
-            out.append(s)
-            continue
-        cur = ""
-        for piece in re.split(r"(?<=[,;:])\s+", s):
-            if cur and len(phonemes(cur + " " + piece, lang)[1]) > limit:
-                out.append(cur)
-                cur = piece
-            else:
-                cur = (cur + " " + piece).strip()
-        if cur:
-            out.append(cur)
-    return out
+
+    # Approx 1 word ~ 6-7 phonemes in Indic/English
+    max_words_per_piece = max(10, limit // 7)
+
+    # Fast path: short text with safe word count
+    words = text.split()
+    if len(words) <= max_words_per_piece:
+        try:
+            if len(phonemes(text, lang)[1]) <= limit:
+                return [text.strip()]
+        except Exception:
+            pass
+
+    # Tier 1: Split into paragraphs / lines to preserve line-break pauses
+    paragraphs = [p.strip() for p in re.split(r'[\r\n]+', text) if p.strip()]
+    if not paragraphs:
+        paragraphs = [text.strip()]
+
+    chunks = []
+    for para in paragraphs:
+        # Tier 2: Split paragraph into sentences by punctuation (.!?।॥)
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?।॥])\s+', para) if s.strip()]
+        if not sentences:
+            sentences = [para]
+
+        for sent in sentences:
+            s_words = sent.split()
+            if len(s_words) <= max_words_per_piece:
+                chunks.append(sent)
+                continue
+
+            # Tier 3: Sentence exceeds word limit; split into clauses (,, ;, :, —, –, -)
+            clauses = [c.strip() for c in re.split(r'(?<=[,;:—–\-\(\)"])\s+', sent) if c.strip()]
+            if not clauses:
+                clauses = [sent]
+
+            cur_clause = ""
+            for c in clauses:
+                c_words = c.split()
+                cur_len = len(cur_clause.split()) if cur_clause else 0
+
+                if cur_clause and (cur_len + len(c_words)) > max_words_per_piece:
+                    chunks.append(cur_clause)
+                    cur_clause = c
+                else:
+                    cur_clause = (cur_clause + " " + c).strip() if cur_clause else c
+
+                # Tier 4: If single clause is still too long (e.g. unpunctuated text run)
+                if len(cur_clause.split()) > max_words_per_piece:
+                    sub_words = cur_clause.split()
+                    for i in range(0, len(sub_words), max_words_per_piece):
+                        piece = " ".join(sub_words[i:i + max_words_per_piece])
+                        if i + max_words_per_piece < len(sub_words):
+                            chunks.append(piece)
+                        else:
+                            cur_clause = piece
+
+            if cur_clause:
+                chunks.append(cur_clause)
+
+    return [c for c in chunks if c.strip()]

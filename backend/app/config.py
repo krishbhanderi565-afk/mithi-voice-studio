@@ -5,7 +5,7 @@ from .utils.paths import get_default_model_dir, get_mavs_data_dir
 
 class Settings(BaseModel):
     app_name: str = "MAVS — Mithi AI Voice Studio"
-    app_version: str = "1.0.0"
+    app_version: str = "1.0.1"
     data_dir: str = str(get_mavs_data_dir())
     model_dir: str = os.getenv("MITHI_MODEL_DIR", str(get_default_model_dir()))
     cpu_threads: int = int(os.getenv("MITHI_CPU_THREADS", "4"))

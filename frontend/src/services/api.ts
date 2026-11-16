@@ -110,17 +110,62 @@ export interface GenerateSpeechResult {
   voice: string;
 }
 
+export interface GenerationProgress {
+  active: boolean;
+  stage: string;
+  current_chunk: number;
+  total_chunks: number;
+  elapsed_sec: number;
+  text_length: number;
+  can_cancel: boolean;
+}
+
+export async function fetchGenerationProgress(): Promise<GenerationProgress> {
+  const base = await getApiBaseUrl();
+  const url = `${base}/api/generate/progress`;
+  try {
+    const res = await fetch(url);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {
+    // Ignore polling errors during busy cycles
+  }
+  return {
+    active: false,
+    stage: 'Idle',
+    current_chunk: 0,
+    total_chunks: 0,
+    elapsed_sec: 0,
+    text_length: 0,
+    can_cancel: false,
+  };
+}
+
+export async function cancelGeneration(): Promise<boolean> {
+  const base = await getApiBaseUrl();
+  const url = `${base}/api/generate/cancel`;
+  try {
+    const res = await fetch(url, { method: 'POST' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function generateSpeech(
   text: string,
   language: string,
   voice: string,
-  seed?: number
+  seed?: number,
+  signal?: AbortSignal
 ): Promise<GenerateSpeechResult> {
   const base = await getApiBaseUrl();
   const url = `${base}/api/generate`;
   try {
     const res = await fetch(url, {
       method: 'POST',
+      signal,
       headers: {
         'Content-Type': 'application/json',
       },

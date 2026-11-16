@@ -30,7 +30,7 @@ function findFreePort(startPort: number = 8000): Promise<number> {
 }
 
 // 2. Poll Backend Health with fast-start progressive backoff
-function waitForBackendReady(port: number, timeoutSec: number = 45): Promise<boolean> {
+function waitForBackendReady(port: number, timeoutSec: number = 90): Promise<boolean> {
   const startTime = Date.now();
   const url = `http://127.0.0.1:${port}/health`;
 
@@ -166,7 +166,7 @@ async function startBackend(): Promise<void> {
     });
 
     // Wait for health endpoint
-    const ready = await waitForBackendReady(allocatedPort, 45);
+    const ready = await waitForBackendReady(allocatedPort, 90);
     isBackendReady = ready;
     console.log(`[MAVS Desktop] Backend readiness result: ${ready}`);
     if (mainWindow && !mainWindow.isDestroyed()) {

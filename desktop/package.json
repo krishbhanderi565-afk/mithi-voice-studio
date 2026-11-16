@@ -1,14 +1,14 @@
 {
   "name": "mavs-desktop",
   "productName": "MAVS",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MAVS — Mithi AI Voice Studio Desktop Speech Synthesis",
   "main": "dist/main.js",
   "author": "Jayesh Bhanderi",
   "license": "Apache-2.0",
   "scripts": {
     "build:main": "tsc",
-    "copy:frontend": "node -e \"const fs = require('fs'); fs.cpSync('../frontend/dist', 'dist/renderer', {recursive: true});\"",
+    "copy:frontend": "node -e \"const fs = require('fs'); if (fs.existsSync('dist/renderer')) fs.rmSync('dist/renderer', {recursive: true, force: true}); fs.cpSync('../frontend/dist', 'dist/renderer', {recursive: true});\"",
     "copy:assets": "node -e \"const fs = require('fs'); if (!fs.existsSync('dist/assets')) fs.mkdirSync('dist/assets', {recursive: true}); fs.cpSync('assets', 'dist/assets', {recursive: true});\"",
     "build": "npm run build:main && npm run copy:frontend && npm run copy:assets",
     "pack:win": "npm run build && electron-builder --win --x64",

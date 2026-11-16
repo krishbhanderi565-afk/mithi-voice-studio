@@ -67,7 +67,7 @@ class Mithi:
         self.packs = {v: t.float().to(self.dev) for v, t in load_file(os.path.join(m, "voices.safetensors")).items()}
 
     # ------------------------------------------------------------------ one sentence
-    @torch.no_grad()
+    @torch.inference_mode()
     def synth_sentence(self, text, lang, voice, seed=0):
         s, dev = self.settings, self.dev
         torch.manual_seed(seed)
@@ -94,21 +94,20 @@ class Mithi:
         dur, f0, en = decode(raw_codes)
         f0 = f0 * np.float32(2 ** (s["pitch_shift"] / 12))
         y = dec_ids[None].to(dev)
-        T = int(dur.sum())
-        aln = torch.zeros(1, y.shape[1], T, device=dev)
         rep = torch.repeat_interleave(torch.arange(y.shape[1]), torch.from_numpy(dur.astype(np.int64))).to(dev)
-        aln[0, rep, torch.arange(T, device=dev)] = 1
         ref = self.packs[voice][min(len(ps), len(self.packs[voice])) - 1]
-        h = self.kokoro.text_encoder(y, torch.tensor([y.shape[1]], device=dev), torch.zeros_like(y, dtype=torch.bool)) @ aln
+        h_text = self.kokoro.text_encoder(y, torch.tensor([y.shape[1]], device=dev), torch.zeros_like(y, dtype=torch.bool))
+        h = h_text[:, :, rep]
         audio = self.kokoro.decoder(h, torch.from_numpy(f0)[None].to(dev), torch.from_numpy(en)[None].to(dev), ref[:, :128])
         return audio.squeeze().float().cpu().numpy()
 
     # ------------------------------------------------------------------ any length
     def split(self, text, lang):
         """The pieces synthesize() reads: the whole text, or sentences / comma pieces when it is long."""
-        return fe.split_text(text, lang, self.settings["max_phonemes_per_piece"])
+        limit = min(180, self.settings.get("max_phonemes_per_piece", 180))
+        return fe.split_text(text, lang, limit)
 
-    def synthesize(self, text, lang="hi", voice="charvi", seed=None, gap=0.15):
+    def synthesize(self, text, lang="hi", voice="charvi", seed=None, gap=0.15, on_progress=None, cancel_event=None):
         """Text of any length -> audio at 24 kHz in [-1, 1]. Long text is read sentence by sentence."""
         if lang not in fe.LANGS:
             raise ValueError(f"unknown language {lang} (one of {', '.join(fe.LANGS)})")
@@ -119,7 +118,16 @@ class Mithi:
         seed = self.settings["seed"] if seed is None else seed
         silence = np.zeros(int(gap * SR), np.float32)
         segs = []
-        for p in self.split(text, lang):
+        chunks = self.split(text, lang)
+        total_chunks = len(chunks)
+        for idx, p in enumerate(chunks):
+            if cancel_event and cancel_event.is_set():
+                raise RuntimeError("Speech generation was cancelled by user.")
+            if on_progress:
+                try:
+                    on_progress(idx + 1, total_chunks, p)
+                except Exception:
+                    pass
             segs += ([silence] if segs else []) + [self.synth_sentence(p, lang, voice, seed).astype(np.float32)]
         return np.clip(np.concatenate(segs), -1.0, 1.0)
 

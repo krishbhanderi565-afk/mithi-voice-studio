@@ -49,6 +49,16 @@ class MithiEngine:
         self.load_error: Optional[str] = None
         self.device = self._resolve_device()
         self.cpu_threads = settings.cpu_threads
+        self.cancel_event = threading.Event()
+        self.active_generation = {
+            "is_active": False,
+            "stage": "Idle",
+            "current_chunk": 0,
+            "total_chunks": 0,
+            "start_time": 0.0,
+            "elapsed_sec": 0.0,
+            "text_length": 0
+        }
 
     @classmethod
     def get_instance(cls) -> "MithiEngine":
@@ -129,9 +139,12 @@ class MithiEngine:
                     self.cpu_threads = threads
                     logger.info(f"PyTorch CPU threads configured to: {self.cpu_threads}")
 
-                # Ensure model directory is on sys.path so mithi_tts can be imported
+                # Ensure backend and model directory are on sys.path so mithi_tts can be imported
+                backend_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                if backend_root not in sys.path:
+                    sys.path.insert(0, backend_root)
                 if model_path not in sys.path:
-                    sys.path.insert(0, model_path)
+                    sys.path.append(model_path)
 
                 from mithi_tts import Mithi  # type: ignore
 
@@ -156,12 +169,44 @@ class MithiEngine:
                 self._init_event.set()
                 logger.info(f"Mithi v1 Flash loaded successfully in {load_duration:.2f}s on {self.device}")
 
+                # Pre-warm G2P for common languages in background to eliminate first-request delay
+                try:
+                    from mithi_tts import frontend as fe
+                    fe.phonemes("नमस्ते", "hi")
+                    fe.phonemes("Welcome", "en")
+                    logger.info("Pre-warmed G2P frontend for Hindi and English.")
+                except Exception as warmup_err:
+                    logger.warning(f"G2P frontend warmup notice: {warmup_err}")
+
             except Exception as e:
                 self.is_loaded = False
                 self.is_loading = False
                 self.load_error = f"Failed to load Mithi v1 Flash: {str(e)}"
                 self._init_event.set()
                 logger.exception(self.load_error)
+
+    def cancel_active_generation(self) -> bool:
+        """Signal cancellation of any running synthesis."""
+        if self.active_generation.get("is_active"):
+            self.cancel_event.set()
+            self.active_generation["stage"] = "Cancelling generation..."
+            logger.info("Cancellation event set for active speech generation.")
+            return True
+        return False
+
+    def get_progress(self) -> dict:
+        """Return current generation progress status."""
+        active = bool(self.active_generation.get("is_active"))
+        elapsed = time.time() - self.active_generation["start_time"] if active else 0.0
+        return {
+            "active": active,
+            "stage": self.active_generation.get("stage", "Idle"),
+            "current_chunk": self.active_generation.get("current_chunk", 0),
+            "total_chunks": self.active_generation.get("total_chunks", 0),
+            "elapsed_sec": round(elapsed, 1),
+            "text_length": self.active_generation.get("text_length", 0),
+            "can_cancel": active
+        }
 
     def ensure_loaded(self, timeout_sec: float = 60.0) -> bool:
         """Wait for background model loading to complete, or initiate loading if idle."""
@@ -177,11 +222,14 @@ class MithiEngine:
         return finished and self.is_loaded and self.model is not None
 
     async def synthesize(self, text: str, lang: str = "en", voice: str = "satvik", seed: Optional[int] = None) -> Tuple[bytes, float]:
-        """Synthesize text into WAV audio bytes.
+        """Synthesize text into WAV audio bytes with detailed stage timing and live progress updates.
         
         Returns:
             Tuple[bytes, float]: (wav_bytes, duration_seconds)
         """
+        t_req_received = time.time()
+        logger.info(f"[TTS Pipeline] Request received. Text length: {len(text)} chars | Lang: {lang} | Voice: {voice}")
+
         if not self.is_loaded or self.model is None:
             if self.is_loading:
                 loop = asyncio.get_running_loop()
@@ -201,34 +249,75 @@ class MithiEngine:
         if voice not in VERIFIED_VOICES:
             raise ValueError(f"Voice '{voice}' is not supported. Supported: {list(VERIFIED_VOICES.keys())}")
 
+        t_preprocessed = time.time()
+        logger.info(f"[TTS Pipeline] Text preprocessing completed in {(t_preprocessed - t_req_received)*1000:.1f}ms")
+
+        # Reset cancellation event and set active progress state
+        self.cancel_event.clear()
+        self.active_generation["is_active"] = True
+        self.active_generation["start_time"] = t_req_received
+        self.active_generation["text_length"] = len(clean_text)
+        self.active_generation["current_chunk"] = 0
+        self.active_generation["total_chunks"] = 0
+        self.active_generation["stage"] = "Analyzing text and chunking sentence structure..."
+
+        def on_chunk_progress(current: int, total: int, chunk_text: str):
+            elapsed = time.time() - t_req_received
+            pct = int((current / total) * 100) if total > 0 else 0
+            self.active_generation["current_chunk"] = current
+            self.active_generation["total_chunks"] = total
+            self.active_generation["stage"] = f"Generating sentence {current} of {total} ({pct}%)..."
+            logger.info(f"[TTS Pipeline] Sentence {current}/{total} generated ({pct}%) in {elapsed:.1f}s: '{chunk_text[:35]}...'")
+
         # Protect against concurrent CPU memory corruption / thrashing
-        async with self._lock:
-            loop = asyncio.get_running_loop()
-            # Run CPU-bound synthesis in threadpool
-            audio_array = await loop.run_in_executor(
-                None,
-                lambda: self.model.synthesize(clean_text, lang=lang, voice=voice, seed=seed)
-            )
+        try:
+            async with self._lock:
+                loop = asyncio.get_running_loop()
+                # Run CPU-bound synthesis in threadpool with progress callback and cancel token
+                audio_array = await loop.run_in_executor(
+                    None,
+                    lambda: self.model.synthesize(
+                        clean_text,
+                        lang=lang,
+                        voice=voice,
+                        seed=seed,
+                        on_progress=on_chunk_progress,
+                        cancel_event=self.cancel_event
+                    )
+                )
 
-        duration_sec = len(audio_array) / SAMPLE_RATE
+            t_concat = time.time()
+            duration_sec = len(audio_array) / SAMPLE_RATE
+            logger.info(f"[TTS Pipeline] Audio generation and concatenation completed in {(t_concat - t_preprocessed):.2f}s (Audio: {duration_sec:.2f}s)")
 
-        # Encode to in-memory WAV
-        buf = io.BytesIO()
-        sf.write(buf, audio_array, SAMPLE_RATE, format="WAV", subtype="PCM_16")
-        wav_bytes = buf.getvalue()
+            # Encode to in-memory WAV
+            t_wav_start = time.time()
+            buf = io.BytesIO()
+            sf.write(buf, audio_array, SAMPLE_RATE, format="WAV", subtype="PCM_16")
+            wav_bytes = buf.getvalue()
+            t_wav_end = time.time()
+            logger.info(f"[TTS Pipeline] WAV encoding completed in {(t_wav_end - t_wav_start)*1000:.1f}ms ({len(wav_bytes)} bytes)")
 
-        # Safely release accelerator cache if running on GPU/MPS
-        if self.device == "mps" and hasattr(torch, "mps"):
-            try:
-                torch.mps.empty_cache()
-            except Exception:
-                pass
-        elif self.device == "cuda" and hasattr(torch, "cuda"):
-            try:
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
+            total_elapsed = t_wav_end - t_req_received
+            rtf = total_elapsed / duration_sec if duration_sec > 0 else 0
+            logger.info(f"[TTS Pipeline] Response ready: Total {total_elapsed:.2f}s for {duration_sec:.2f}s audio | RTF: {rtf:.2f}x")
 
-        return wav_bytes, duration_sec
+            # Safely release accelerator cache if running on GPU/MPS
+            if self.device == "mps" and hasattr(torch, "mps"):
+                try:
+                    torch.mps.empty_cache()
+                except Exception:
+                    pass
+            elif self.device == "cuda" and hasattr(torch, "cuda"):
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+
+            return wav_bytes, duration_sec
+
+        finally:
+            self.active_generation["is_active"] = False
+            self.active_generation["stage"] = "Completed"
 
 engine = MithiEngine.get_instance()
